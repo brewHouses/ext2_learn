@@ -66,6 +66,7 @@ static inline unsigned ext2_chunk_size(struct inode *inode)
 	return inode->i_sb->s_blocksize;
 }
 
+// 仅仅是做了一个 unmap, 然后 put_page 
 static inline void ext2_put_page(struct page *page)
 {
 	kunmap(page);
@@ -196,6 +197,7 @@ fail:
 	return false;
 }
 
+// 这个n是page的编号
 static struct page * ext2_get_page(struct inode *dir, unsigned long n,
 				   int quiet)
 {
@@ -481,16 +483,20 @@ void ext2_set_link(struct inode *dir, struct ext2_dir_entry_2 *de,
 /*
  *	Parent is locked.
  */
+// 这个函数大概就是来写磁盘dentry的
 int ext2_add_link (struct dentry *dentry, struct inode *inode)
 {
+	// d_inode: 根据dentry获取inode对象
 	struct inode *dir = d_inode(dentry->d_parent);
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
+	// 只是获得dir所在的super block的s_blocksize
 	unsigned chunk_size = ext2_chunk_size(dir);
 	unsigned reclen = EXT2_DIR_REC_LEN(namelen);
 	unsigned short rec_len, name_len;
 	struct page *page = NULL;
 	ext2_dirent * de;
+	// 返回如果这个dir全部加载到内存中占用4k的page的个数
 	unsigned long npages = dir_pages(dir);
 	unsigned long n;
 	char *kaddr;
@@ -504,13 +510,17 @@ int ext2_add_link (struct dentry *dentry, struct inode *inode)
 	 */
 	for (n = 0; n <= npages; n++) {
 		char *dir_end;
-
+		
+		// 获取由n指定的page编号
 		page = ext2_get_page(dir, n, 0);
 		err = PTR_ERR(page);
 		if (IS_ERR(page))
 			goto out;
 		lock_page(page);
 		kaddr = page_address(page);
+		// kaddr + ext2_last_byte(dir, n) 就是这个dir的结束地址
+		// ext2_last_byte 是获得 dir 最后一个有效位相对于第n个page的偏移
+		// 这样就假设逻辑block在page里是连续的??
 		dir_end = kaddr + ext2_last_byte(dir, n);
 		de = (ext2_dirent *)kaddr;
 		kaddr += PAGE_SIZE - reclen;

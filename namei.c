@@ -92,6 +92,9 @@ struct dentry *ext2_get_parent(struct dentry *child)
  * If the create succeeds, we fill in the inode information
  * with d_instantiate(). 
  */
+
+// 这个函数的目的是在参数dir下面创建文件的inode节点, 其中dentry是该文件的dentry条目
+// 创建的vfs inode会被插入sb的inode链表, 磁盘数据结构 ext2_inode 会卸乳磁盘的高速缓存页, 并将该页标记为脏
 static int ext2_create (struct inode * dir, struct dentry * dentry, umode_t mode, bool excl)
 {
 	struct inode *inode;
@@ -101,13 +104,25 @@ static int ext2_create (struct inode * dir, struct dentry * dentry, umode_t mode
 	if (err)
 		return err;
 
+	// 在dir指定的目录下创建 inode, 并将创建的磁盘数据结构写到磁盘
+	// 返回的inode是 vfs 的 inode
 	inode = ext2_new_inode(dir, mode, &dentry->d_name);
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
 
+	// 根据挂载时候的选项以及访问文件的选项设置inode节点的操作inode的方法和file的方法
+	// 必须先create以后, 才能设置 file option
+	// 因为 ext2 根据文件的各种标志和挂载系统的一些标志, 可以在加载文件的时候动态设置文件以及inode的操作函数
+	// 所以不需要将这些字段保存到磁盘, 也不能将这些字段保存到磁盘, 因为这样可能带来很繁琐的移植性问题(比如在linuxA 上好用,但是在LinuxB上就不好用, 是因为他们内存中的函数地址不一样)
 	ext2_set_file_ops(inode);
 	mark_inode_dirty(inode);
+        // 这个函数大概就是来写磁盘dentry的
+	// 明天在看看
+	// 网上说这个函数是建立dentry和inode的连接, 
+	// 因伪在申请磁盘上的数据结构 ext2_inode 之前, 就已经申请完该文件的dentry了
+	// 但是该dentry是内存数据结构, 是通过下面的这个函数来将他写入磁盘数据结构 ext2_dentry
 	return ext2_add_nondir(dentry, inode);
+	return 0;
 }
 
 static int ext2_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)

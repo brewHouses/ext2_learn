@@ -67,6 +67,9 @@ struct mb_cache;
 /*
  * second extended-fs super-block data in memory
  */
+// 内存数据结构, 相对于磁盘的数据结构,么有那么严谨
+// 磁盘数据结构全部使用的整型,并且严格指定了大小端存储方式
+// 以及非常严格数据类型长度
 struct ext2_sb_info {
 	unsigned long s_frag_size;	/* Size of a fragment in bytes */
 	unsigned long s_frags_per_block;/* Number of fragments per block */
@@ -100,6 +103,7 @@ struct ext2_sb_info {
 	struct percpu_counter s_freeblocks_counter;
 	struct percpu_counter s_freeinodes_counter;
 	struct percpu_counter s_dirs_counter;
+	// 结构体内部是bgl_lock数组
 	struct blockgroup_lock *s_blockgroup_lock;
 	/* root of the per fs reservation window tree */
 	spinlock_t s_rsv_window_lock;
@@ -118,6 +122,7 @@ struct ext2_sb_info {
 	struct dax_device *s_daxdev;
 };
 
+// 返回block_group指定的块组的锁
 static inline spinlock_t *
 sb_bgl_lock(struct ext2_sb_info *sbi, unsigned int block_group)
 {
@@ -166,6 +171,7 @@ sb_bgl_lock(struct ext2_sb_info *sbi, unsigned int block_group)
 /* First non-reserved inode for old ext2 filesystems */
 #define EXT2_GOOD_OLD_FIRST_INO	11
 
+// 根据给定的vfs的super_block返回相应的ext2_sb_info
 static inline struct ext2_sb_info *EXT2_SB(struct super_block *sb)
 {
 	return sb->s_fs_info;
@@ -196,14 +202,17 @@ static inline struct ext2_sb_info *EXT2_SB(struct super_block *sb)
 /*
  * Structure of a blocks group descriptor
  */
+// 磁盘上的数据结构，存放的也全部都是整型
+// 应该是即是磁盘上的数据结构也是内存的数据结构
+// 因为他们完全一样
 struct ext2_group_desc
 {
-	__le32	bg_block_bitmap;		/* Blocks bitmap block */
-	__le32	bg_inode_bitmap;		/* Inodes bitmap block */
-	__le32	bg_inode_table;		/* Inodes table block */
+	__le32	bg_block_bitmap;		/* Blocks bitmap block 只占用一个块*/
+	__le32	bg_inode_bitmap;		/* Inodes bitmap block 只占用一个块*/
+	__le32	bg_inode_table;		/* Inodes table block 存放inode节点表占用的第一个块号的编号*/
 	__le16	bg_free_blocks_count;	/* Free blocks count */
 	__le16	bg_free_inodes_count;	/* Free inodes count */
-	__le16	bg_used_dirs_count;	/* Directories count */
+	__le16	bg_used_dirs_count;	/* Directories count 组中目录的个数*/
 	__le16	bg_pad;
 	__le32	bg_reserved[3];
 };
@@ -220,9 +229,13 @@ struct ext2_group_desc
  * Constants relative to the data blocks
  */
 #define	EXT2_NDIR_BLOCKS		12
+// 直接块
 #define	EXT2_IND_BLOCK			EXT2_NDIR_BLOCKS
+// 一级？
 #define	EXT2_DIND_BLOCK			(EXT2_IND_BLOCK + 1)
+// 二级？
 #define	EXT2_TIND_BLOCK			(EXT2_DIND_BLOCK + 1)
+// 三级？
 #define	EXT2_N_BLOCKS			(EXT2_TIND_BLOCK + 1)
 
 /*
@@ -299,6 +312,14 @@ static inline __u32 ext2_mask_flags(umode_t mode, __u32 flags)
 /*
  * Structure of an inode on the disk
  */
+// 磁盘数据结构, 也全部都是整型
+// 在这个版本的代码中(kernel 5.0.18), 实用sizeof计算ext2_inode的大小
+// 计算得到的结果为128, 这表示一个1024大小的块可以放8个ext2_inode, 4k的
+// 块可以存放32个ext2_inode, 即索引节点
+// 这样就可以根据超级块的s_inodes_per_group还有s_log_block_size
+// 来计算出inode表占用的块数
+//
+// 注意：并没有inode编号字段
 struct ext2_inode {
 	__le16	i_mode;		/* File mode */
 	__le16	i_uid;		/* Low 16 bits of Owner Uid */
@@ -309,7 +330,7 @@ struct ext2_inode {
 	__le32	i_dtime;	/* Deletion Time */
 	__le16	i_gid;		/* Low 16 bits of Group Id */
 	__le16	i_links_count;	/* Links count */
-	__le32	i_blocks;	/* Blocks count */
+	__le32	i_blocks;	/* Blocks count 指代物理块，以512B为单位，但是512*i_blocks总是逻辑块大小的整数倍*/
 	__le32	i_flags;	/* File flags */
 	union {
 		struct {
@@ -322,10 +343,10 @@ struct ext2_inode {
 			__le32  m_i_reserved1;
 		} masix1;
 	} osd1;				/* OS dependent 1 */
-	__le32	i_block[EXT2_N_BLOCKS];/* Pointers to blocks */
+	__le32	i_block[EXT2_N_BLOCKS];/* Pointers to blocks 值为15*/
 	__le32	i_generation;	/* File version (for NFS) */
-	__le32	i_file_acl;	/* File ACL */
-	__le32	i_dir_acl;	/* Directory ACL */
+	__le32	i_file_acl;	/* File ACL 指向存放增强属性的块*/
+	__le32	i_dir_acl;	/* Directory ACL 一般文件不使用,所以可以做i_size的扩展,来表示更大的文件大小*/
 	__le32	i_faddr;	/* Fragment address */
 	union {
 		struct {
@@ -414,6 +435,7 @@ struct ext2_inode {
 /*
  * Structure of the super block
  */
+// 存储在磁盘的数据结构
 struct ext2_super_block {
 	__le32	s_inodes_count;		/* Inodes count */
 	__le32	s_blocks_count;		/* Blocks count */
@@ -421,6 +443,7 @@ struct ext2_super_block {
 	__le32	s_free_blocks_count;	/* Free blocks count */
 	__le32	s_free_inodes_count;	/* Free inodes count */
 	__le32	s_first_data_block;	/* First Data Block */
+	// 1024*2^s_log_block_size
 	__le32	s_log_block_size;	/* Block size */
 	__le32	s_log_frag_size;	/* Fragment size */
 	__le32	s_blocks_per_group;	/* # Blocks per group */
@@ -595,6 +618,8 @@ struct ext2_dir_entry {
  * bigger than 255 chars, it's safe to reclaim the extra byte for the
  * file_type field.
  */
+// 也就是说ext2_dir_entry和ext2_dir_entry_2在内存中占用空间长度一样
+// 这个是一个磁盘数据结构, 全部是整型
 struct ext2_dir_entry_2 {
 	__le32	inode;			/* Inode number */
 	__le16	rec_len;		/* Directory entry length */
@@ -651,7 +676,9 @@ struct ext2_mount_options {
 /*
  * second extended file system inode data in memory
  */
+// 存放在内存中的inode对象
 struct ext2_inode_info {
+	// 啊, 这个i_data是干嘛用的。。。
 	__le32	i_data[15];
 	__u32	i_flags;
 	__u32	i_faddr;
@@ -697,7 +724,7 @@ struct ext2_inode_info {
 	 * ext2_reserve_window_node.
 	 */
 	struct mutex truncate_mutex;
-	struct inode	vfs_inode;
+	struct inode vfs_inode;
 	struct list_head i_orphan;	/* unlinked but open inodes */
 #ifdef CONFIG_QUOTA
 	struct dquot *i_dquot[MAXQUOTAS];

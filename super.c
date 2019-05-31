@@ -55,6 +55,7 @@ void ext2_error(struct super_block *sb, const char *function,
 
 	if (!sb_rdonly(sb)) {
 		spin_lock(&sbi->s_lock);
+		// 设置超级块状态为error
 		sbi->s_mount_state |= EXT2_ERROR_FS;
 		es->s_state |= cpu_to_le16(EXT2_ERROR_FS);
 		spin_unlock(&sbi->s_lock);
@@ -76,6 +77,7 @@ void ext2_error(struct super_block *sb, const char *function,
 	if (!sb_rdonly(sb) && test_opt(sb, ERRORS_RO)) {
 		ext2_msg(sb, KERN_CRIT,
 			     "error: remounting filesystem read-only");
+		// 其实并没有remount, 只是将内存中super_block链表中的sb设置为readonly状态
 		sb->s_flags |= SB_RDONLY;
 	}
 }
@@ -90,7 +92,7 @@ void ext2_msg(struct super_block *sb, const char *prefix,
 
 	vaf.fmt = fmt;
 	vaf.va = &args;
-
+        // vfs中注释s_id为/* Informational name */
 	printk("%sEXT2-fs (%s): %pV\n", prefix, sb->s_id, &vaf);
 
 	va_end(args);
@@ -111,6 +113,7 @@ void ext2_update_dynamic_rev(struct super_block *sb)
 		     "new feature flag, running e2fsck is recommended",
 		     EXT2_DYNAMIC_REV);
 
+	// 这个函数会将改变落盘
 	es->s_first_ino = cpu_to_le32(EXT2_GOOD_OLD_FIRST_INO);
 	es->s_inode_size = cpu_to_le16(EXT2_GOOD_OLD_INODE_SIZE);
 	es->s_rev_level = cpu_to_le32(EXT2_DYNAMIC_REV);
@@ -176,7 +179,8 @@ static void ext2_put_super (struct super_block * sb)
 }
 
 static struct kmem_cache * ext2_inode_cachep;
-
+// 申请一个inode, 但是是通过先申请ext2_inode_info对象，然后将对象中的vfs_inode字段返回
+// ext2_inode_info 中的 vfs_inode 就是一个inode对象, 所以为vfs 中的 inode 也分配了相应的内存
 static struct inode *ext2_alloc_inode(struct super_block *sb)
 {
 	struct ext2_inode_info *ei;
@@ -192,17 +196,23 @@ static struct inode *ext2_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
+// 好像是释放掉ext2_sb_info
+// 作为rcu的回调函数
 static void ext2_i_callback(struct rcu_head *head)
 {
+	// 根据head这个字段，返回inode指针, 传入的head是inode结构体i_rcu字段的一个实例
+	// rcu: Read Copy Update
 	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(ext2_inode_cachep, EXT2_I(inode));
 }
 
 static void ext2_destroy_inode(struct inode *inode)
 {
+	// 当不再使用RCU时，会调用相应的回调函数来进行资源回收或者一些其他操作
 	call_rcu(&inode->i_rcu, ext2_i_callback);
 }
 
+// 就是对给定的地址初始化一些锁还有inode
 static void init_once(void *foo)
 {
 	struct ext2_inode_info *ei = (struct ext2_inode_info *) foo;
@@ -218,6 +228,7 @@ static void init_once(void *foo)
 	inode_init_once(&ei->vfs_inode);
 }
 
+// 这个标志符和函数声明放在一起，表示gcc编译器在编译时，需要把这个函数放在.text.init Section 中，而这个Section 在内核完成初始化之后，就会被释放掉。
 static int __init init_inodecache(void)
 {
 	ext2_inode_cachep = kmem_cache_create_usercopy("ext2_inode_cache",
@@ -349,6 +360,7 @@ static const struct quotactl_ops ext2_quotactl_ops = {
 };
 #endif
 
+// 将ext2的操作与vfs的操作映射起来
 static const struct super_operations ext2_sops = {
 	.alloc_inode	= ext2_alloc_inode,
 	.destroy_inode	= ext2_destroy_inode,
@@ -368,6 +380,7 @@ static const struct super_operations ext2_sops = {
 #endif
 };
 
+// 根据ino指定的inode号返回inode
 static struct inode *ext2_nfs_get_inode(struct super_block *sb,
 		u64 ino, u32 generation)
 {
@@ -394,6 +407,7 @@ static struct inode *ext2_nfs_get_inode(struct super_block *sb,
 	return inode;
 }
 
+// 下面两个函数是nfs相关
 static struct dentry *ext2_fh_to_dentry(struct super_block *sb, struct fid *fid,
 		int fh_len, int fh_type)
 {
@@ -408,12 +422,14 @@ static struct dentry *ext2_fh_to_parent(struct super_block *sb, struct fid *fid,
 				    ext2_nfs_get_inode);
 }
 
+// 将nfs需要的操作导出
 static const struct export_operations ext2_export_ops = {
 	.fh_to_dentry = ext2_fh_to_dentry,
 	.fh_to_parent = ext2_fh_to_parent,
 	.get_parent = ext2_get_parent,
 };
 
+// 就是解析data字符串数组
 static unsigned long get_sb_block(void **data)
 {
 	unsigned long 	sb_block;
@@ -698,6 +714,8 @@ static int ext2_setup_super (struct super_block * sb,
 	return res;
 }
 
+// 就是每个块组都检查一下他的块组描述符
+// 主要就是检查bg_block_bitmap，bg_inode_bitmap，bg_inode_tables是不是在合理范围内
 static int ext2_check_descriptors(struct super_block *sb)
 {
 	int i;
@@ -753,12 +771,14 @@ static int ext2_check_descriptors(struct super_block *sb)
  * block limit, and also a limit of (2^32 - 1) 512-byte sectors in i_blocks.
  * We need to be 1 filesystem block less than the 2^32 sector limit.
  */
+// 传入的参数一般是这个: sb->s_blocksize_bits
 static loff_t ext2_max_size(int bits)
 {
 	loff_t res = EXT2_NDIR_BLOCKS;
 	int meta_blocks;
 	unsigned int upper_limit;
 	unsigned int ppb = 1 << (bits-2);
+	printk("ext2: %d\n", bits);
 
 	/* This is calculated to be the largest file size for a
 	 * dense, file such that the total number of
@@ -773,6 +793,8 @@ static loff_t ext2_max_size(int bits)
 	upper_limit >>= (bits - 9);
 
 	/* Compute how many blocks we can address by block tree */
+	// -2 是因为一个块地址为32位，需要4个字节，所以除以4，也就是右移2个bit
+	// *2和*3是因为二级索引与三级索引
 	res += 1LL << (bits-2);
 	res += 1LL << (2*(bits-2));
 	res += 1LL << (3*(bits-2));
@@ -799,13 +821,14 @@ static loff_t ext2_max_size(int bits)
 		DIV_ROUND_UP(upper_limit, ppb*ppb);
 	res -= meta_blocks;
 check_lfs:
+	// 变成字节为单位的文件大小
 	res <<= bits;
 	if (res > MAX_LFS_FILESIZE)
 		res = MAX_LFS_FILESIZE;
 
 	return res;
 }
-
+// nr就是block group号，这个函数根据块组号获取块组描述符所在的逻辑地址块号
 static unsigned long descriptor_loc(struct super_block *sb,
 				    unsigned long logic_sb_block,
 				    int nr)
@@ -822,10 +845,16 @@ static unsigned long descriptor_loc(struct super_block *sb,
 	bg = sbi->s_desc_per_block * nr;
 	if (ext2_bg_has_super(sb, bg))
 		has_super = 1;
-
+	// 这个块组没有superblock(第一个块组肯定有，其他块组按照一定的算法决定有没有)的话,
+	// 那么块组中的第一个块就是描述符，否则的话，第二个块组存放块组描述符
 	return ext2_group_first_block_no(sb, bg) + has_super;
 }
 
+// 这个函数是完成mount的核心操作, 主要是创建ext2_sb_info, 并填写有效信息
+// 主要操作是从磁盘读取相应的超级块和块组描述符，并把它们保存在页高速缓存中
+// 只有当ext2文件系统被卸载的时候相应的内存缓冲区才会被释放
+//
+// ext2的超级块与块组描述符是常驻内存的, 保存在页高速缓存中
 static int ext2_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct dax_device *dax_dev = fs_dax_get_by_bdev(sb->s_bdev);
@@ -845,6 +874,7 @@ static int ext2_fill_super(struct super_block *sb, void *data, int silent)
 	__le32 features;
 	int err;
 	struct ext2_mount_options opts;
+	//printk("ext2_fill_super: data = %s\n", data);
 
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
@@ -887,6 +917,7 @@ static int ext2_fill_super(struct super_block *sb, void *data, int silent)
 		logic_sb_block = sb_block;
 	}
 
+	// 读逻辑块
 	if (!(bh = sb_bread(sb, logic_sb_block))) {
 		ext2_msg(sb, KERN_ERR, "error: unable to read superblock");
 		goto failed_sbi;
@@ -1304,6 +1335,7 @@ static int ext2_freeze(struct super_block *sb)
 	 * because we have unattached inodes and thus filesystem is not fully
 	 * consistent.
 	 */
+	// 已删除(unlink), 但是仍然在程序中打开的文件
 	if (atomic_long_read(&sb->s_remove_count)) {
 		ext2_sync_fs(sb, 1);
 		return 0;
@@ -1481,9 +1513,14 @@ static int ext2_statfs (struct dentry * dentry, struct kstatfs * buf)
 	return 0;
 }
 
+// 这是作为file_system_type的mount字段，为ext2执行mount操作
+// file_system_type 是向内核注册文件系统时候使用的
+// 只调用了一个函数, 这个函数来自vfs
+// 但是参数有ext2_fill_super是重点
 static struct dentry *ext2_mount(struct file_system_type *fs_type,
 	int flags, const char *dev_name, void *data)
 {
+	printk("week: the name of ext2 module is :%s\n", fs_type->name);
 	return mount_bdev(fs_type, flags, dev_name, data, ext2_fill_super);
 }
 
@@ -1637,22 +1674,26 @@ out:
 
 #endif
 
+// 包含挂载方法
 static struct file_system_type ext2_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "ext2",
+	// 相当于《深入理解Linux内核》中的get_sb
 	.mount		= ext2_mount,
 	.kill_sb	= kill_block_super,
-	.fs_flags	= FS_REQUIRES_DEV,
+	.fs_flags	= FS_REQUIRES_DEV,// 这个标志说明必须位于物理磁盘设备上
 };
 MODULE_ALIAS_FS("ext2");
 
 static int __init init_ext2_fs(void)
 {
 	int err;
-
+        printk("size of ext2_inode is %d\n",sizeof(struct ext2_inode));
 	err = init_inodecache();
 	if (err)
 		return err;
+	// register_filesystem 来将ext2文件系统注册到内核里
+	// 本质上是将ext2_fs_type 连接到内核全局变量file_systems指向的链表中
         err = register_filesystem(&ext2_fs_type);
 	if (err)
 		goto out;

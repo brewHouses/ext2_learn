@@ -43,6 +43,7 @@
  *
  * Return buffer_head of bitmap on success or NULL.
  */
+// 根据给定的super_block对象以 块组编号 及来读块组的inode_bitmap
 static struct buffer_head *
 read_inode_bitmap(struct super_block * sb, unsigned long block_group)
 {
@@ -53,6 +54,7 @@ read_inode_bitmap(struct super_block * sb, unsigned long block_group)
 	if (!desc)
 		goto error_out;
 
+	// 将指定块组的 inode_bitmap 块读到页高速缓存中, 并返回页高速缓存中的 buffer_head
 	bh = sb_bread(sb, le32_to_cpu(desc->bg_inode_bitmap));
 	if (!bh)
 		ext2_error(sb, "read_inode_bitmap",
@@ -428,6 +430,14 @@ found:
 	return group;
 }
 
+// 在磁盘上创建inode节点
+// 将无关目录放在不同的块组，把文件放在父目录所在的块组
+// 新索引节点既可以是目录也可以是普通文件
+// 参数：dir 新创建的节点要插入到 dir 这个目录中
+//       函数首先创建一个内存inode节点即: vfs inode,(这也表明同时有 ext2_inode_info 这个数据结构)
+//       然后为刚刚已经有内存数据结构的节点申请并分配磁盘数据结构: ext2_inode, 并保存到磁盘上
+//
+// 问题是好想没有写 dir 的 dentry
 struct inode *ext2_new_inode(struct inode *dir, umode_t mode,
 			     const struct qstr *qstr)
 {
@@ -444,6 +454,11 @@ struct inode *ext2_new_inode(struct inode *dir, umode_t mode,
 	int err;
 
 	sb = dir->i_sb;
+	// 创建一个inode，并且添加到super_block的s_inodes链表中, 这个链表包含所有inode节点。
+	// 为什么要把inode节点连接到所在的super_block的inode链表上啊。。。
+	// 最终调用的申请inode的方法是文件系统提供的, 除非文件系统没有提供
+	// 在ext2中new_inode最终调用的是 ext2_alloc_inode 方法来创建inode的, 这个 inode 存放在
+	// 名为 ext2_inode_cachep 的 ext2_inode_info 的 vfs_inode 字段中
 	inode = new_inode(sb);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
@@ -453,6 +468,7 @@ struct inode *ext2_new_inode(struct inode *dir, umode_t mode,
 	es = sbi->s_es;
 	if (S_ISDIR(mode)) {
 		if (test_opt(sb, OLDALLOC))
+			// 为 dir 分配一个合适的块组
 			group = find_group_dir(sb, dir);
 		else
 			group = find_group_orlov(sb, dir);
@@ -464,13 +480,16 @@ struct inode *ext2_new_inode(struct inode *dir, umode_t mode,
 		goto fail;
 	}
 
+	// 对每一个块组进行操作
 	for (i = 0; i < sbi->s_groups_count; i++) {
+		// 获取 group 指定的块组描述符的地址, bh2 返回的是块组描述符所在的buffer_head
 		gdp = ext2_get_group_desc(sb, group, &bh2);
 		if (!gdp) {
 			if (++group == sbi->s_groups_count)
 				group = 0;
 			continue;
 		}
+		// 因为在这里 bitmap_bh 的值为 NULL, 所以并没有什么实际的作用, 也就是在函数里, 判断一下就返回了
 		brelse(bitmap_bh);
 		bitmap_bh = read_inode_bitmap(sb, group);
 		if (!bitmap_bh) {
@@ -480,8 +499,10 @@ struct inode *ext2_new_inode(struct inode *dir, umode_t mode,
 		ino = 0;
 
 repeat_in_this_group:
+		// 找到块组中第一个为0的bit
 		ino = ext2_find_next_zero_bit((unsigned long *)bitmap_bh->b_data,
 					      EXT2_INODES_PER_GROUP(sb), ino);
+		// 如果在当前块组中没有可用inode节点的话, 那么就从下一个块组找
 		if (ino >= EXT2_INODES_PER_GROUP(sb)) {
 			/*
 			 * Rare race: find_group_xx() decided that there were
@@ -515,12 +536,18 @@ repeat_in_this_group:
 	 */
 	err = -ENOSPC;
 	goto fail;
+// 得到相应块中的inode节点了
 got:
 	mark_buffer_dirty(bitmap_bh);
 	if (sb->s_flags & SB_SYNCHRONOUS)
 		sync_dirty_buffer(bitmap_bh);
+	// 可以让高速缓存释放这个 bitmap 页
+	// 虽然名字上这样叫, 但是本质上干的活就是减少一下 bitmap_bh 的引用计数
+	// 具体释不释放相应的page以及什么时候释放由内核的其他部分决定
 	brelse(bitmap_bh);
 
+	// 这个计算出来的是 inode 的编号?
+	// 反正 inode 的磁盘数据结构(ext2_inode)上是不存放inode编号信息的
 	ino += group * EXT2_INODES_PER_GROUP(sb) + 1;
 	if (ino < EXT2_FIRST_INO(sb) || ino > le32_to_cpu(es->s_inodes_count)) {
 		ext2_error (sb, "ext2_new_inode",
@@ -531,12 +558,16 @@ got:
 		goto fail;
 	}
 
+	// 修改 ext2_sb_info 中的 s_freeinodes_counter -1
 	percpu_counter_add(&sbi->s_freeinodes_counter, -1);
+	// 如果创建的这个 inode 还是个目录的话, 那么还要修改 ext2_sb_info 中的 s_dirs_counter +1
 	if (S_ISDIR(mode))
 		percpu_counter_inc(&sbi->s_dirs_counter);
 
 	spin_lock(sb_bgl_lock(sbi, group));
+	// 同时按照相同的方法修改相应块组的 bg_free_inodes_count
 	le16_add_cpu(&gdp->bg_free_inodes_count, -1);
+	// 还不理解 ext2_sb_info 中 s_debts 的意义
 	if (S_ISDIR(mode)) {
 		if (sbi->s_debts[group] < 255)
 			sbi->s_debts[group]++;
@@ -547,6 +578,7 @@ got:
 	}
 	spin_unlock(sb_bgl_lock(sbi, group));
 
+	// 将修改过的块组所在的 buffer_head 修改为脏
 	mark_buffer_dirty(bh2);
 	if (test_opt(sb, GRPID)) {
 		inode->i_mode = mode;
@@ -555,10 +587,13 @@ got:
 	} else
 		inode_init_owner(inode, dir, mode);
 
+	// 这个 i_ino 是 vfs 的 inode 结构的一部分, 没毛病
+	// 但是磁盘数据结构真的没有inode编号这个字段
 	inode->i_ino = ino;
 	inode->i_blocks = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	memset(ei->i_data, 0, sizeof(ei->i_data));
+	// 设置file flag
 	ei->i_flags =
 		ext2_mask_flags(mode, EXT2_I(dir)->i_flags & EXT2_FL_INHERITED);
 	ei->i_faddr = 0;
@@ -568,13 +603,17 @@ got:
 	ei->i_dir_acl = 0;
 	ei->i_dtime = 0;
 	ei->i_block_alloc_info = NULL;
+	// 这个字段表示包含该文件的 ext2_inode 的块组
 	ei->i_block_group = group;
 	ei->i_dir_start_lookup = 0;
+	// 这个标志表明 inode是新创建的
 	ei->i_state = EXT2_STATE_NEW;
+	// 在 ext2_set_inode_flags 这个函数里就是根据 ext2_inode_info 的 i_flags 设置 vfs 的 inode 的 i_flags
 	ext2_set_inode_flags(inode);
 	spin_lock(&sbi->s_next_gen_lock);
 	inode->i_generation = sbi->s_next_generation++;
 	spin_unlock(&sbi->s_next_gen_lock);
+	// 插到hash表中??
 	if (insert_inode_locked(inode) < 0) {
 		ext2_error(sb, "ext2_new_inode",
 			   "inode number already in use - inode=%lu",

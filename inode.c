@@ -1385,9 +1385,11 @@ void ext2_set_file_ops(struct inode *inode)
 {
 	inode->i_op = &ext2_file_inode_operations;
 	inode->i_fop = &ext2_file_operations;
+	// 看代码是direct access访问的标志, 也就是绕过page cache
 	if (IS_DAX(inode))
 		inode->i_mapping->a_ops = &ext2_dax_aops;
 	else if (test_opt(inode->i_sb, NOBH))
+		// 查看挂载时是否设置了EXT2_MOUNT_NOBH选项
 		inode->i_mapping->a_ops = &ext2_nobh_aops;
 	else
 		inode->i_mapping->a_ops = &ext2_aops;
