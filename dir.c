@@ -362,6 +362,8 @@ ext2_readdir(struct file *file, struct dir_context *ctx)
  * and the entry itself. Page is returned mapped and unlocked.
  * Entry is guaranteed to be valid.
  */
+// 真正的根据 dir 这个目录来查找 child 指定名字的目录的 inode的编号
+// 这个会查找 dir 所占用的所有的块
 struct ext2_dir_entry_2 *ext2_find_entry (struct inode *dir,
 			const struct qstr *child, struct page **res_page)
 {
@@ -375,6 +377,7 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode *dir,
 	ext2_dirent * de;
 	int dir_has_error = 0;
 
+	// 表明是一个空目录
 	if (npages == 0)
 		goto out;
 
@@ -399,6 +402,7 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode *dir,
 					ext2_put_page(page);
 					goto out;
 				}
+				// 比较 name 与 目录项 de 里面的名字是否一样
 				if (ext2_match (namelen, name, de))
 					goto found;
 				de = ext2_next_entry(de);
@@ -433,21 +437,25 @@ struct ext2_dir_entry_2 * ext2_dotdot (struct inode *dir, struct page **p)
 	ext2_dirent *de = NULL;
 
 	if (!IS_ERR(page)) {
+		// 也就是说默认情况下, 第一个目录项为 . , 第二个目录项就是 .. 了
 		de = ext2_next_entry((ext2_dirent *) page_address(page));
 		*p = page;
 	}
 	return de;
 }
 
+// dir 是一个目录的 vfs inode 对象, 根据child指定的文件名来查找相应的 inode 节点号
 ino_t ext2_inode_by_name(struct inode *dir, const struct qstr *child)
 {
 	ino_t res = 0;
 	struct ext2_dir_entry_2 *de;
 	struct page *page;
 	
+	// 先根据 child 查找出位于磁盘的目录项
 	de = ext2_find_entry (dir, child, &page);
 	if (de) {
 		res = le32_to_cpu(de->inode);
+		// 减少page的引用计数
 		ext2_put_page(page);
 	}
 	return res;
@@ -459,6 +467,7 @@ static int ext2_prepare_chunk(struct page *page, loff_t pos, unsigned len)
 }
 
 /* Releases the page */
+// 将已经关联在一起的 inode 和 dentry 添加到dir上
 void ext2_set_link(struct inode *dir, struct ext2_dir_entry_2 *de,
 		   struct page *page, struct inode *inode, int update_times)
 {
@@ -483,10 +492,12 @@ void ext2_set_link(struct inode *dir, struct ext2_dir_entry_2 *de,
 /*
  *	Parent is locked.
  */
-// 这个函数大概就是来写磁盘dentry的
+// 这个函数是将目录项 dentry 与目录项对应的文件在vfs中的实体: 即inode 联系起来
+// 一个 vfs inode 实体可以对应多个 vfs dentry
+// 也就是 dentry 里面有指向 inode 的指针, 但是inode中没有指向dentry的指针
 int ext2_add_link (struct dentry *dentry, struct inode *inode)
 {
-	// d_inode: 根据dentry获取inode对象
+	// d_inode: 根据dentry获取父目录的inode对象
 	struct inode *dir = d_inode(dentry->d_parent);
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
@@ -570,10 +581,14 @@ got_it:
 	}
 	de->name_len = namelen;
 	memcpy(de->name, name, namelen);
+	// 设置磁盘数据结构 ext2_inode 的 inode number
 	de->inode = cpu_to_le32(inode->i_ino);
+	// 设置磁盘数据结构 ext2_inode 的 file_typ 字段
 	ext2_set_de_type (de, inode);
 	err = ext2_commit_chunk(page, pos, rec_len);
+	// 表示目录被修改, 文件状态被修改
 	dir->i_mtime = dir->i_ctime = current_time(dir);
+	// 表示不是 btree 类型的 dir
 	EXT2_I(dir)->i_flags &= ~EXT2_BTREE_FL;
 	mark_inode_dirty(dir);
 	/* OFFSET_CACHE */
@@ -590,10 +605,14 @@ out_unlock:
  * ext2_delete_entry deletes a directory entry by merging it with the
  * previous entry. Page is up-to-date. Releases the page.
  */
+// 删除磁盘数据结构 dir 表示的目录项, page 是dir所在的页高速缓存
+// 删除的过程起始是合并目录项的过程, 具体细节没有细看
 int ext2_delete_entry (struct ext2_dir_entry_2 * dir, struct page * page )
 {
+	// 这个 inode 是dir的父节点
 	struct inode *inode = page->mapping->host;
 	char *kaddr = page_address(page);
+	// 就是找出在page的那一块的起始地址
 	unsigned from = ((char*)dir - kaddr) & ~(ext2_chunk_size(inode)-1);
 	unsigned to = ((char *)dir - kaddr) +
 				ext2_rec_len_from_disk(dir->rec_len);
@@ -701,6 +720,7 @@ int ext2_empty_dir (struct inode * inode)
 				printk("kaddr=%p, de=%p\n", kaddr, de);
 				goto not_empty;
 			}
+			// 放在磁盘上的 ext2_dir_entry_2 的inode字段仅仅inode编号, 也就是仅仅是一个整型数字
 			if (de->inode != 0) {
 				/* check for . and .. */
 				if (de->name[0] != '.')
@@ -714,6 +734,8 @@ int ext2_empty_dir (struct inode * inode)
 				} else if (de->name[1] != '.')
 					goto not_empty;
 			}
+			// 根据当前的 ext2_dir_entry_2 信息获得下一个 ext2_dir_entry_2 对象的地址
+			// 这个是根据 ext2 对磁盘数据结构 ext2_dir_entry_2 的设计来实现的
 			de = ext2_next_entry(de);
 		}
 		ext2_put_page(page);

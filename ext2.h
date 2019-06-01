@@ -620,6 +620,8 @@ struct ext2_dir_entry {
  */
 // 也就是说ext2_dir_entry和ext2_dir_entry_2在内存中占用空间长度一样
 // 这个是一个磁盘数据结构, 全部是整型
+// 是保存inode number 的, 有个注释写错了...
+// 链接数是存放在磁盘数据结构 ext2_inode 里, 而不是存放在目录项
 struct ext2_dir_entry_2 {
 	__le32	inode;			/* Inode number */
 	__le16	rec_len;		/* Directory entry length */

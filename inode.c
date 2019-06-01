@@ -777,7 +777,7 @@ cleanup:
 int ext2_get_block(struct inode *inode, sector_t iblock,
 		struct buffer_head *bh_result, int create)
 {
-	unsigned max_blocks = bh_result->b_size >> inode->i_blkbits;
+	unsigned max_blocks = bh_result->b_size >> inode->i_blkbits;// i_blkbits 是磁盘物理块占用的bit位
 	bool new = false, boundary = false;
 	u32 bno;
 	int ret;
@@ -858,6 +858,8 @@ const struct iomap_ops ext2_iomap_ops;
 int ext2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		u64 start, u64 len)
 {
+	// generic_block_fiemap 的通用部分是计算start到start+len这块数据在哪个数据块中
+	// 然后调用传入的ext2_get_block的方法来获得相应的磁盘逻辑块
 	return generic_block_fiemap(inode, fieinfo, start, len,
 				    ext2_get_block);
 }
@@ -1318,6 +1320,7 @@ static int ext2_setsize(struct inode *inode, loff_t newsize)
 	return 0;
 }
 
+// 根据 ino 和 super_block 中的信息计算出所在磁盘的位置, 并将其读到内存中
 static struct ext2_inode *ext2_get_inode(struct super_block *sb, ino_t ino,
 					struct buffer_head **p)
 {
@@ -1381,6 +1384,7 @@ void ext2_set_inode_flags(struct inode *inode)
 		inode->i_flags |= S_DAX;
 }
 
+// 认为 inode 是一个文件
 void ext2_set_file_ops(struct inode *inode)
 {
 	inode->i_op = &ext2_file_inode_operations;
@@ -1395,6 +1399,7 @@ void ext2_set_file_ops(struct inode *inode)
 		inode->i_mapping->a_ops = &ext2_aops;
 }
 
+// 根据inode编号在sb的inodes链表中查找相应的 vfs indoe 对象
 struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 {
 	struct ext2_inode_info *ei;
@@ -1406,15 +1411,18 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	uid_t i_uid;
 	gid_t i_gid;
 
+	// iget_locked 才是根据ino从sb中获取 vfs inode 对象
 	inode = iget_locked(sb, ino);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
+	// 如果不是新的inode节点, 那么就直接返回
 	if (!(inode->i_state & I_NEW))
 		return inode;
 
 	ei = EXT2_I(inode);
 	ei->i_block_alloc_info = NULL;
 
+	// 获取磁盘数据结构 ext2_inode
 	raw_inode = ext2_get_inode(inode->i_sb, ino, &bh);
 	if (IS_ERR(raw_inode)) {
 		ret = PTR_ERR(raw_inode);
@@ -1637,11 +1645,14 @@ int ext2_write_inode(struct inode *inode, struct writeback_control *wbc)
 	return __ext2_write_inode(inode, wbc->sync_mode == WB_SYNC_ALL);
 }
 
+// 为目录项设置属性
 int ext2_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	struct inode *inode = d_inode(dentry);
 	int error;
-
+	
+	// 检查有没有权限为当前目录设置 iattr 属性(其中iattr中的ia_value中包含此次操作需要的权限)
+	// 比如chown只需要检查能不能改变文件的属主即可
 	error = setattr_prepare(dentry, iattr);
 	if (error)
 		return error;
@@ -1662,6 +1673,7 @@ int ext2_setattr(struct dentry *dentry, struct iattr *iattr)
 		if (error)
 			return error;
 	}
+	// 真正执行拷贝操作, 将iattr的属性拷贝给inode的相应字段
 	setattr_copy(inode, iattr);
 	if (iattr->ia_valid & ATTR_MODE)
 		error = posix_acl_chmod(inode, inode->i_mode);

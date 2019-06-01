@@ -30,6 +30,8 @@ const struct inode_operations ext2_symlink_inode_operations = {
 };
  
 const struct inode_operations ext2_fast_symlink_inode_operations = {
+	// 只有simple_get_link需要看
+	// 就是很简单的将 vfs inode 的i_link 字段返回
 	.get_link	= simple_get_link,
 	.setattr	= ext2_setattr,
 #ifdef CONFIG_EXT2_FS_XATTR

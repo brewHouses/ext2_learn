@@ -149,9 +149,11 @@ ext2_get_acl(struct inode *inode, int type)
 	int retval;
 
 	switch (type) {
+	// ACL_TYPE_ACCESS 表示用于访问控制的ACL
 	case ACL_TYPE_ACCESS:
 		name_index = EXT2_XATTR_INDEX_POSIX_ACL_ACCESS;
 		break;
+	// ACL_TYPE_DEFAULT 只能用于目录
 	case ACL_TYPE_DEFAULT:
 		name_index = EXT2_XATTR_INDEX_POSIX_ACL_DEFAULT;
 		break;

@@ -437,7 +437,7 @@ found:
 //       函数首先创建一个内存inode节点即: vfs inode,(这也表明同时有 ext2_inode_info 这个数据结构)
 //       然后为刚刚已经有内存数据结构的节点申请并分配磁盘数据结构: ext2_inode, 并保存到磁盘上
 //
-// 问题是好想没有写 dir 的 dentry
+// 没有写 dir 的 dentry
 struct inode *ext2_new_inode(struct inode *dir, umode_t mode,
 			     const struct qstr *qstr)
 {

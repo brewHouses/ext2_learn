@@ -144,6 +144,8 @@ ext2_xattr_handler(int name_index)
  * Returns a negative error number on failure, or the number of bytes
  * used / required on success.
  */
+// 当 buffer 为NULL的时候, 就计算相应属性需要的空间大小
+// 否则把相应属性的值放到buffer里面
 int
 ext2_xattr_get(struct inode *inode, int name_index, const char *name,
 	       void *buffer, size_t buffer_size)
@@ -169,6 +171,7 @@ ext2_xattr_get(struct inode *inode, int name_index, const char *name,
 	if (!EXT2_I(inode)->i_file_acl)
 		goto cleanup;
 	ea_idebug(inode, "reading block %d", EXT2_I(inode)->i_file_acl);
+	// i_file_acl 这个块就是存放 acl 属性所在的磁盘块的
 	bh = sb_bread(inode->i_sb, EXT2_I(inode)->i_file_acl);
 	error = -EIO;
 	if (!bh)
