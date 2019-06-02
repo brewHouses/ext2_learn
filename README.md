@@ -7,25 +7,25 @@
 
 - inode_operations
 
-'''c
+```c
 ext2_file_inode_operations
 ext2_dir_inode_operations
 ext2_special_inode_operations
 ext2_fast_symlink_inode_operations
 ext2_symlink_inode_operations
-'''
+```
 
 - file_operations
 
-'''c
+```c
 ext2_dir_operations
 ext2_file_operations
-'''
+```
 
 - address_space_operations
 
-'''c
+```c
 ext2_aops
 ext2_nobh_aops
 ext2_dax_aops
-'''
+```
